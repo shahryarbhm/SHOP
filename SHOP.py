@@ -7,6 +7,15 @@ import numpy as np
 import torch
 from tqdm import tqdm
 import json
+from IPython.display import display, Javascript, Image
+from google.colab.output import eval_js
+from base64 import b64decode, b64encode
+import asyncio
+import numpy as np
+import PIL
+import io
+import html
+import time
 
 # needed libraries for YOLOv5
 from yolov5.utils.datasets import IMG_FORMATS, VID_FORMATS
@@ -35,6 +44,87 @@ from pose_estimation.pose.utils.decode import get_final_preds, get_simdr_final_p
 
 # importing necessary custom libraries
 from helperFunctions import distGet, bbox_overlap, INNER_RATIO, HANDHELD_MAP
+def js_to_image(js_reply):
+  """
+  Params:
+          js_reply: JavaScript object containing image from webcam
+  Returns:
+          img: OpenCV BGR image
+  """
+  # decode base64 image
+  image_bytes = b64decode(js_reply.split(',')[1])
+  # convert bytes to numpy array
+  jpg_as_np = np.frombuffer(image_bytes, dtype=np.uint8)
+  # decode numpy array into OpenCV BGR image
+  img = cv2.imdecode(jpg_as_np, flags=1)
+
+  return img
+
+# function to convert OpenCV Rectangle bounding box image into base64 byte string to be overlayed on video stream
+def bbox_to_bytes(bbox_array):
+  """
+  Params:
+          bbox_array: Numpy array (pixels) containing rectangle to overlay on video stream.
+  Returns:
+        bytes: Base64 image byte string
+  """
+  # convert array into PIL image
+  bbox_PIL = PIL.Image.fromarray(bbox_array, 'RGBA')
+  iobuf = io.BytesIO()
+  # format bbox into png for return
+  bbox_PIL.save(iobuf, format='png')
+  # format return string
+  bbox_bytes = 'data:image/png;base64,{}'.format((str(b64encode(iobuf.getvalue()), 'utf-8')))
+
+  return bbox_bytes
+def take_photo(filename='photo.jpg', quality=0.8):
+  js = Javascript('''
+    async function takePhoto(quality) {
+      const div = document.createElement('div');
+      // const capture = document.createElement('button');
+      // capture.textContent = 'Capture';
+
+      const video = document.createElement('video');
+      video.style.display = 'block';
+      const stream = await navigator.mediaDevices.getUserMedia({video: true});
+
+      document.body.appendChild(div);
+      div.appendChild(video);
+      video.srcObject = stream;
+      await video.play();
+      // Resize the output to fit the video element.
+      google.colab.output.setIframeHeight(document.documentElement.scrollHeight, true);
+
+      // Wait for Capture to be clicked.
+      // await new Promise((resolve) => capture.onclick = resolve);
+      
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      stream.getVideoTracks()[0].stop();
+      div.remove();
+      return canvas.toDataURL('image/jpeg', quality);
+    }
+    ''')
+  display(js)
+
+  # get photo data
+  data = eval_js('takePhoto({})'.format(quality))
+  # get OpenCV format image
+  img = js_to_image(data) 
+  # grayscale img
+  gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+  print(gray.shape)
+  # get face bounding box coordinates using Haar Cascade
+  # save image
+  cv2.imwrite(filename, img)
+  print(filename)
+
+  return 'ret',img
 
 # SHOP pipeline class
 class SHOP:    
@@ -276,8 +366,7 @@ class SHOP:
                 cachePath = os.path.join(cacheDir, str(frameTrack)) + ".txt"
                 
                 # reading from video
-                ret, frame = cam.read()
-                
+                ret, frame = take_photo(f'{test_folder}im_{counter}.jpg')
                 # not feasible to run with webcam on wsl
                 cv2.imshow("webcam frame", ret)
                 if not (cv2.waitKey(1) & 0xFF == ord(' ')):
